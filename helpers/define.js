@@ -152,8 +152,10 @@ module.exports = require('machine').build({
 
         // Iterate through each attribute, building a query string
         var schema;
+        var processedDefinition;
         try {
-          schema = Helpers.schema.buildSchema(inputs.definition);
+          processedDefinition = Helpers.schema.processForeignKeys(inputs.definition, inputs.tableName);
+          schema = Helpers.schema.buildSchema(processedDefinition);
         } catch (e) {
           // If there was an issue, release the connection
           Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
@@ -181,6 +183,11 @@ module.exports = require('machine').build({
             return;
           }
 
+          // Register this table as created in our registry
+          if (global._tableRegistry) {
+            global._tableRegistry.registerTable(inputs.tableName);
+            console.log(`Registered table ${inputs.tableName} as created`);
+          }
 
           //  ╔╗ ╦ ╦╦╦  ╔╦╗  ┬┌┐┌┌┬┐┌─┐─┐ ┬┌─┐┌─┐
           //  ╠╩╗║ ║║║   ║║  ││││ ││├┤ ┌┴┬┘├┤ └─┐
@@ -191,16 +198,153 @@ module.exports = require('machine').build({
             definition: inputs.definition,
             tableName: inputs.tableName
           },
-
           function buildIndexesCb(err) {
-            Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-              if (err) {
+            if (err) {
+              Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
                 return exits.error(err);
-              }
+              });
+              return;
+            }
 
-              return exits.success();
-            });
-            return;
+            // Check if there are any deferred foreign key constraints to add
+            if (processedDefinition._deferredForeignKeys && processedDefinition._deferredForeignKeys.length > 0) {
+              console.log(`Processing ${processedDefinition._deferredForeignKeys.length} deferred foreign key constraints for ${inputs.tableName}`);
+              
+              // Create a function to add deferred constraints one by one
+              var addDeferredConstraints = function(constraints, idx, cb) {
+                if (idx >= constraints.length) {
+                  return cb();
+                }
+                
+                var constraint = constraints[idx];
+                
+                // Check if the referenced table exists now
+                if (!global._tableRegistry.tableExists(constraint.referencedTable)) {
+                  console.log(`Still can't add foreign key to ${constraint.referencedTable}, table doesn't exist yet`);
+                  return addDeferredConstraints(constraints, idx + 1, cb);
+                }
+                
+                // Add the constraint
+                var alterQuery = `ALTER TABLE ${tableName} ADD ${constraint.constraint}`;
+                console.log(`Adding deferred constraint: ${alterQuery}`);
+                
+                Helpers.query.runNativeQuery(connection, alterQuery, [], function(alterErr) {
+                  if (alterErr) {
+                    console.log(`Error adding deferred constraint: ${alterErr.message}`);
+                    // Log more details about the error
+                    if (alterErr.code) {
+                      console.log(`Error code: ${alterErr.code}`);
+                    }
+                    if (alterErr.detail) {
+                      console.log(`Error detail: ${alterErr.detail}`);
+                    }
+                    if (alterErr.hint) {
+                      console.log(`Error hint: ${alterErr.hint}`);
+                    }
+                    
+                    // If the error is because the constraint already exists, we can ignore it
+                    if (alterErr.code === '42710') { // duplicate_object
+                      console.log(`Constraint already exists, continuing...`);
+                    }
+                    // If the error is because the referenced table doesn't exist, mark it for retry
+                    else if (alterErr.code === '42P01') { // undefined_table
+                      console.log(`Referenced table doesn't exist yet, will retry later`);
+                      constraint._retryLater = true;
+                    }
+                  } else {
+                    console.log(`Successfully added deferred constraint to ${constraint.referencedTable}`);
+                  }
+                  
+                  // Continue with next constraint regardless of error
+                  return addDeferredConstraints(constraints, idx + 1, cb);
+                });
+              };
+              
+              // Start adding deferred constraints
+              addDeferredConstraints(processedDefinition._deferredForeignKeys, 0, function() {
+                // Check if any constraints need to be retried later
+                var retryConstraints = processedDefinition._deferredForeignKeys.filter(function(constraint) {
+                  return constraint._retryLater === true;
+                });
+                
+                if (retryConstraints.length > 0) {
+                  console.log(`${retryConstraints.length} constraints need to be retried later`);
+                  // Store these constraints in the global registry for later processing
+                  if (!global._tableRegistry.deferredConstraints) {
+                    global._tableRegistry.deferredConstraints = [];
+                  }
+                  
+                  // Add these constraints to the global registry
+                  retryConstraints.forEach(function(constraint) {
+                    global._tableRegistry.deferredConstraints.push({
+                      tableName: tableName,
+                      constraint: constraint
+                    });
+                  });
+                }
+                
+                Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
+                  return exits.success();
+                });
+              });
+            } else {
+              // Check if there are any global deferred constraints that reference this table
+              if (global._tableRegistry.deferredConstraints && global._tableRegistry.deferredConstraints.length > 0) {
+                // Filter constraints that can now be applied because this table was just created
+                var applicableConstraints = global._tableRegistry.deferredConstraints.filter(function(item) {
+                  return item.constraint.referencedTable === inputs.tableName;
+                });
+                
+                if (applicableConstraints.length > 0) {
+                  console.log(`Found ${applicableConstraints.length} deferred constraints that can now be applied because ${inputs.tableName} was created`);
+                  
+                  // Process these constraints
+                  var processConstraints = function(constraintItems, idx, cb) {
+                    if (idx >= constraintItems.length) {
+                      return cb();
+                    }
+                    
+                    var item = constraintItems[idx];
+                    var alterQuery = `ALTER TABLE "${item.tableName}" ADD ${item.constraint.constraint}`;
+                    console.log(`Adding previously deferred constraint: ${alterQuery}`);
+                    
+                    Helpers.query.runNativeQuery(connection, alterQuery, [], function(alterErr) {
+                      if (alterErr) {
+                        console.log(`Error adding previously deferred constraint: ${alterErr.message}`);
+                        if (alterErr.code) {
+                          console.log(`Error code: ${alterErr.code}`);
+                        }
+                      } else {
+                        console.log(`Successfully added previously deferred constraint`);
+                        
+                        // Remove this constraint from the global registry
+                        global._tableRegistry.deferredConstraints = global._tableRegistry.deferredConstraints.filter(function(c) {
+                          return c !== item;
+                        });
+                      }
+                      
+                      // Continue with next constraint
+                      return processConstraints(constraintItems, idx + 1, cb);
+                    });
+                  };
+                  
+                  // Process the applicable constraints
+                  processConstraints(applicableConstraints, 0, function() {
+                    Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
+                      return exits.success();
+                    });
+                  });
+                } else {
+                  Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
+                    return exits.success();
+                  });
+                }
+              } else {
+                Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
+                  return exits.success();
+                });
+              }
+            }
           }); // </ buildIndexes() >
         }); // </ runNativeQuery >
       }); // </ afterNamespaceCreation >

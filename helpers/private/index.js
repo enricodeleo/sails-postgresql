@@ -24,6 +24,7 @@ module.exports = {
     buildIndexes: require('./schema/build-indexes'),
     buildSchema: require('./schema/build-schema'),
     createNamespace: require('./schema/create-namespace'),
-    escapeTableName: require('./schema/escape-table-name')
+    escapeTableName: require('./schema/escape-table-name'),
+    processForeignKeys: require('./schema/process-foreign-keys')
   }
 };

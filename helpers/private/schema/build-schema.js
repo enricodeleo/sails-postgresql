@@ -15,12 +15,20 @@ module.exports = function buildSchema(definition) {
     throw new Error('`buildSchema()` requires a valid definition be passed in, but no argument was provided.');
   }
 
+  console.log("Building schema with definition:");
+  console.log(JSON.stringify(definition, null, 2));
+
   //  ╔╗╔╔═╗╦═╗╔╦╗╔═╗╦  ╦╔═╗╔═╗  ┌─┐┌─┐┬  ┬ ┬┌┬┐┌┐┌  ┌┬┐┬ ┬┌─┐┌─┐   ┌─┐┌┬┐┌─┐
   //  ║║║║ ║╠╦╝║║║╠═╣║  ║╔═╝║╣   │  │ ││  │ │││││││   │ └┬┘├─┘├┤    ├┤  │ │
   //  ╝╚╝╚═╝╩╚═╩ ╩╩ ╩╩═╝╩╚═╝╚═╝  └─┘└─┘┴─┘└─┘┴ ┴┘└┘   ┴  ┴ ┴  └─┘┘  └─┘ ┴ └─┘
 
+  // Filter out metadata properties that start with underscore
+  var filteredDefinition = _.omit(definition, function(value, key) {
+    return key.startsWith('_');
+  });
+
   // Build up a string of column attributes
-  var columns = _.map(definition, function map(attribute, columnName) {
+  var columns = _.map(filteredDefinition, function map(attribute, columnName) {
     // - - - - - - - - - - - - - - - - - - - - -
     // No longer relevant:
     // ```
@@ -80,14 +88,22 @@ module.exports = function buildSchema(definition) {
       throw new Error('Incompatible `columnType` for auto-incrementing column ("'+columnName+'").  Expecting `columnType` to be left undefined, or to be set explicitly to SERIAL, BIGSERIAL, or SMALLSERIAL.  But instead got a different numeric PostgreSQL column type, "'+attribute.columnType+'", which unfortunately does not support auto-increment.  To resolve this, please remove this explicit `columnType`, or set it to an auto-increment-compatible PostgreSQL column type.');
     }//•
 
-    // Mix in other auto-migration directives to get the PostgreSQL-ready SQL
-    // we'll use to declare this column's physical data type.
-    return [
+    // Build the column definition parts
+    var columnParts = [
       '"'+columnName+'"',
       computedColumnType || '',
       attribute.notNull ? 'NOT NULL' : '',
       attribute.unique ? 'UNIQUE' : ''
-    ].join(' ');
+    ];
+    
+    // Add foreign key constraint if this column has one and the referenced table exists
+    if (definition[columnName] && definition[columnName]._isForeignKey && 
+        definition[columnName]._foreignKeyConstraint) {
+      columnParts.push(definition[columnName]._foreignKeyConstraint);
+    }
+    
+    // Join all parts with spaces and return
+    return columnParts.filter(Boolean).join(' ');
 
   }).join(',');
 
@@ -96,9 +112,44 @@ module.exports = function buildSchema(definition) {
     return attribute.primaryKey;
   }));
 
-  // Add the Primary Key to the definition
+  // Find any foreign keys in the definition that need to be added as table constraints
+  // (This is for foreign keys that couldn't be added inline with the column definition)
+  var foreignKeys = [];
+  
+  _.forEach(definition, function findFK(attribute, columnName) {
+    if (attribute._isForeignKey && !attribute._foreignKeyConstraint) {
+      // Format: FOREIGN KEY (column_name) REFERENCES table_name(referenced_column_name)
+      var constraint = 'FOREIGN KEY ("' + columnName + '") REFERENCES "' +
+                      attribute._referencesTable + '"("' + attribute._referencesColumn + '")';
+      
+      // Add ON DELETE behavior if specified
+      if (attribute._onDelete) {
+        constraint += ' ON DELETE ' + attribute._onDelete;
+      } else {
+        // Default to RESTRICT for safety
+        constraint += ' ON DELETE RESTRICT';
+      }
+      
+      // Add ON UPDATE behavior if specified
+      if (attribute._onUpdate) {
+        constraint += ' ON UPDATE ' + attribute._onUpdate;
+      } else {
+        // Default to CASCADE for updates
+        constraint += ' ON UPDATE CASCADE';
+      }
+      
+      // Check if the referenced table exists in our registry
+      if (global._tableRegistry && global._tableRegistry.tableExists(attribute._referencesTable)) {
+        foreignKeys.push(constraint);
+        console.log(`Adding foreign key constraint: ${constraint}`);
+      }
+    }
+  });
+
+  // Add the Primary Key and Foreign Keys to the definition
   var constraints = _.compact([
-    primaryKeys.length && 'PRIMARY KEY ("' + primaryKeys.join('","') + '")'
+    primaryKeys.length && 'PRIMARY KEY ("' + primaryKeys.join('","') + '")',
+    foreignKeys.length && foreignKeys.join(', ')
   ]).join(', ');
 
   var schema = _.compact([columns, constraints]).join(', ');

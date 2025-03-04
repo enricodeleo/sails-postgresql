@@ -17,6 +17,7 @@
 node_modules
 npm-debug.log
 .node_history
+.npmrc
 
 ############################
 # editor & OS files
@@ -44,3 +45,5 @@ nbproject
 ############################
 .tmp
 dump.rdb
+.aider.*
+.aider*

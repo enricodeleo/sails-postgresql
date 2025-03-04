@@ -103,8 +103,7 @@ module.exports = require('machine').build({
       }
 
       // Build native query
-      var query = 'DROP TABLE IF EXISTS ' + tableName + ';';
-
+      var query = 'DROP TABLE IF EXISTS ' + tableName + ' CASCADE;';
 
       //  ╦═╗╦ ╦╔╗╔  ┌┬┐┬─┐┌─┐┌─┐  ┌─┐ ┬ ┬┌─┐┬─┐┬ ┬
       //  ╠╦╝║ ║║║║   ││├┬┘│ │├─┘  │─┼┐│ │├┤ ├┬┘└┬┘
