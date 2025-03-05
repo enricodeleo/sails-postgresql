@@ -6,69 +6,71 @@
 //  ╚═════╝ ╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝
 //
 
-module.exports = require('machine').build({
+// Global flag to track if the foreign key application has been scheduled
+var _fkApplicationScheduled = false;
 
+module.exports = require("machine").build({
+  friendlyName: "Define",
 
-  friendlyName: 'Define',
-
-
-  description: 'Create a new table in the database based on a given schema.',
-
+  description: "Create a new table in the database based on a given schema.",
 
   inputs: {
-
     datastore: {
-      description: 'The datastore to use for connections.',
-      extendedDescription: 'Datastores represent the config and manager required to obtain an active database connection.',
+      description: "The datastore to use for connections.",
+      extendedDescription:
+        "Datastores represent the config and manager required to obtain an active database connection.",
       required: true,
-      type: 'ref'
+      type: "ref",
     },
 
     tableName: {
-      description: 'The name of the table to describe.',
+      description: "The name of the table to describe.",
       required: true,
-      example: 'users'
+      example: "users",
     },
 
     definition: {
-      description: 'The definition of the schema to build.',
+      description: "The definition of the schema to build.",
       required: true,
-      example: {}
+      example: {},
     },
 
     meta: {
-      friendlyName: 'Meta (custom)',
-      description: 'Additional stuff to pass to the driver.',
-      extendedDescription: 'This is reserved for custom driver-specific extensions.',
-      type: 'ref'
-    }
-
+      friendlyName: "Meta (custom)",
+      description: "Additional stuff to pass to the driver.",
+      extendedDescription:
+        "This is reserved for custom driver-specific extensions.",
+      type: "ref",
+    },
   },
 
-
   exits: {
-
     success: {
-      description: 'The table was created successfully.'
+      description: "The table was created successfully.",
     },
 
     badConnection: {
-      friendlyName: 'Bad connection',
-      description: 'A connection either could not be obtained or there was an error using the connection.'
-    }
-
+      friendlyName: "Bad connection",
+      description:
+        "A connection either could not be obtained or there was an error using the connection.",
+    },
   },
-
 
   fn: function define(inputs, exits) {
     // Dependencies
-    var _ = require('@sailshq/lodash');
-    var Helpers = require('./private');
+    var _ = require("@sailshq/lodash");
+    var Helpers = require("./private");
 
+    // Special flag to indicate this is the foreign key application call
+    var isFKApplication = inputs.meta && inputs.meta.applyForeignKeys === true;
+
+    // If this is a foreign key application call, handle it separately
+    if (isFKApplication) {
+      return applyForeignKeys(inputs.datastore, exits);
+    }
 
     // Set a flag if a leased connection from outside the adapter was used or not.
-    var leased = _.has(inputs.meta, 'leasedConnection');
-
+    var leased = _.has(inputs.meta, "leasedConnection");
 
     //  ╔═╗╦ ╦╔═╗╔═╗╦╔═  ┌─┐┌─┐┬─┐  ┌─┐  ┌─┐┌─┐  ┌─┐┌─┐┬ ┬┌─┐┌┬┐┌─┐
     //  ║  ╠═╣║╣ ║  ╠╩╗  ├┤ │ │├┬┘  ├─┤  ├─┘│ ┬  └─┐│  ├─┤├┤ │││├─┤
@@ -76,278 +78,525 @@ module.exports = require('machine').build({
     // This is a unique feature of Postgres. It may be passed in on a query
     // by query basis using the meta input or configured on the datastore. Default
     // to use the public schema.
-    var schemaName = 'public';
+    var schemaName = "public";
     if (inputs.meta && inputs.meta.schemaName) {
       schemaName = inputs.meta.schemaName;
     } else if (inputs.datastore.config && inputs.datastore.config.schemaName) {
       schemaName = inputs.datastore.config.schemaName;
     }
 
-
     //  ╔═╗╔═╗╔═╗╦ ╦╔╗╔  ┌─┐┌─┐┌┐┌┌┐┌┌─┐┌─┐┌┬┐┬┌─┐┌┐┌
     //  ╚═╗╠═╝╠═╣║║║║║║  │  │ │││││││├┤ │   │ ││ ││││
     //  ╚═╝╩  ╩ ╩╚╩╝╝╚╝  └─┘└─┘┘└┘┘└┘└─┘└─┘ ┴ ┴└─┘┘└┘
     // Spawn a new connection for running queries on.
-    Helpers.connection.spawnOrLeaseConnection(inputs.datastore, inputs.meta, function spawnConnectionCb(err, connection) {
-      if (err) {
-        return exits.badConnection(err);
-      }
-
-
-      //  ╔═╗╦═╗╔═╗╔═╗╔╦╗╔═╗  ┌─┐┌─┐┬ ┬┌─┐┌┬┐┌─┐
-      //  ║  ╠╦╝║╣ ╠═╣ ║ ║╣   └─┐│  ├─┤├┤ │││├─┤
-      //  ╚═╝╩╚═╚═╝╩ ╩ ╩ ╚═╝  └─┘└─┘┴ ┴└─┘┴ ┴┴ ┴
-      //  ┌┐┌┌─┐┌┬┐┌─┐┌─┐┌─┐┌─┐┌─┐┌─┐  ┌─┐┌─┐  ┌┐┌┌─┐┌─┐┌┬┐┌─┐┌┬┐
-      //  │││├─┤│││├┤ └─┐├─┘├─┤│  ├┤   ├─┤└─┐  │││├┤ ├┤  ││├┤  ││
-      //  ┘└┘┴ ┴┴ ┴└─┘└─┘┴  ┴ ┴└─┘└─┘  ┴ ┴└─┘  ┘└┘└─┘└─┘─┴┘└─┘─┴┘
-      (function createSchemaNamespace(proceed) {
-        // If we're being told NOT to create schemas, then skip right to
-        // creating the table.
-        if (inputs.datastore.config && inputs.datastore.config.createSchemas === false) {
-          return proceed();
+    Helpers.connection.spawnOrLeaseConnection(
+      inputs.datastore,
+      inputs.meta,
+      function spawnConnectionCb(err, connection) {
+        if (err) {
+          return exits.badConnection(err);
         }
 
-        // Create the schema if needed.
-        // If the schema name is "public" there is nothing to create
-        if (schemaName === 'public') {
-          return proceed();
-        }
-
-        Helpers.schema.createNamespace({
-          datastore: inputs.datastore,
-          schemaName: schemaName,
-          meta: inputs.meta,
-        }, function createNamespaceCb(err) {
-          if (err) {
-            return proceed(err);
+        //  ╔═╗╦═╗╔═╗╔═╗╔╦╗╔═╗  ┌─┐┌─┐┬ ┬┌─┐┌┬┐┌─┐
+        //  ║  ╠╦╝║╣ ╠═╣ ║ ║╣   └─┐│  ├─┤├┤ │││├─┤
+        //  ╚═╝╩╚═╚═╝╩ ╩ ╩ ╚═╝  └─┘└─┘┴ ┴└─┘┴ ┴┴ ┴
+        //  ┌┐┌┌─┐┌┬┐┌─┐┌─┐┌─┐┌─┐┌─┐┌─┐  ┌─┐┌─┐  ┌┐┌┌─┐┌─┐┌┬┐┌─┐┌┬┐
+        //  │││├─┤│││├┤ └─┐├─┘├─┤│  ├┤   ├─┤└─┐  │││├┤ ├┤  ││├┤  ││
+        //  ┘└┘┴ ┴┴ ┴└─┘└─┘┴  ┴ ┴└─┘└─┘  ┴ ┴└─┘  ┘└┘└─┘└─┘─┴┘└─┘─┴┘
+        (function createSchemaNamespace(proceed) {
+          // If we're being told NOT to create schemas, then skip right to
+          // creating the table.
+          if (
+            inputs.datastore.config &&
+            inputs.datastore.config.createSchemas === false
+          ) {
+            return proceed();
           }
 
-          return proceed();
-        });
-      })(function afterNamespaceCreation(err) {
+          // Create the schema if needed.
+          // If the schema name is "public" there is nothing to create
+          if (schemaName === "public") {
+            return proceed();
+          }
+
+          Helpers.schema.createNamespace(
+            {
+              datastore: inputs.datastore,
+              schemaName: schemaName,
+              meta: inputs.meta,
+            },
+            function createNamespaceCb(err) {
+              if (err) {
+                return proceed(err);
+              }
+
+              return proceed();
+            }
+          );
+        })(function afterNamespaceCreation(err) {
+          if (err) {
+            // If there was an issue, release the connection
+            Helpers.connection.releaseConnection(
+              connection,
+              leased,
+              function releaseConnectionCb() {
+                return exits.error(err);
+              }
+            );
+            return;
+          }
+
+          // Escape Table Name
+          var tableName;
+          try {
+            tableName = Helpers.schema.escapeTableName(
+              inputs.tableName,
+              schemaName
+            );
+          } catch (e) {
+            // If there was an issue, release the connection
+            Helpers.connection.releaseConnection(
+              connection,
+              leased,
+              function releaseConnectionCb() {
+                return exits.error(e);
+              }
+            );
+            return;
+          }
+
+          // Process definition to identify foreign keys (for logging purposes only)
+          function processForeignKeys(definition, tableName) {
+            console.log("PROCESSING FOREIGN KEYS");
+            console.log(
+              "Note: All foreign keys will be applied in a separate phase"
+            );
+
+            // Track foreign key details for logging
+            _.forEach(definition, function (attribute, columnName) {
+              // Case 1: Explicit foreignKey in meta
+              if (attribute.meta && attribute.meta.foreignKey === true) {
+                var referencedTable =
+                  attribute.meta.references || attribute.model || columnName;
+                var referencedColumn = attribute.meta.referencesKey || "id";
+                console.log(
+                  `Found foreign key: ${columnName} -> ${referencedTable}.${referencedColumn}`
+                );
+              }
+              // Case 2: Implicit via model property
+              else if (attribute.model) {
+                console.log(
+                  `Found foreign key via model property: ${columnName} -> ${attribute.model}.id`
+                );
+              }
+            });
+
+            return definition;
+          }
+
+          // Process the definition (for logging only - we don't use the result)
+          processForeignKeys(_.cloneDeep(inputs.definition), inputs.tableName);
+
+          // Build schema from the definition - without foreign key constraints
+          var schema;
+          try {
+            schema = Helpers.schema.buildSchema(inputs.definition);
+          } catch (e) {
+            Helpers.connection.releaseConnection(
+              connection,
+              leased,
+              function releaseConnectionCb() {
+                return exits.error(e);
+              }
+            );
+            return;
+          }
+
+          // Build Query for table creation
+          var createTableQuery =
+            "CREATE TABLE IF NOT EXISTS " + tableName + " (" + schema + ")";
+
+          // Run the query to create the table
+          Helpers.query.runNativeQuery(
+            connection,
+            createTableQuery,
+            [],
+            function (err) {
+              if (err) {
+                Helpers.connection.releaseConnection(
+                  connection,
+                  leased,
+                  function () {
+                    return exits.error(err);
+                  }
+                );
+                return;
+              }
+
+              // Build any indexes
+              Helpers.schema.buildIndexes(
+                {
+                  connection: connection,
+                  definition: inputs.definition,
+                  tableName: inputs.tableName,
+                },
+                function (err) {
+                  if (err) {
+                    Helpers.connection.releaseConnection(
+                      connection,
+                      leased,
+                      function () {
+                        return exits.error(err);
+                      }
+                    );
+                    return;
+                  }
+
+                  // Schedule the foreign key application if not already scheduled
+                  if (!_fkApplicationScheduled) {
+                    _fkApplicationScheduled = true;
+
+                    // Wait a reasonable amount of time for all tables to be created
+                    setTimeout(function () {
+                      console.log("SCHEDULING FOREIGN KEY APPLICATION");
+
+                      // Call define with special meta flag to apply foreign keys
+                      define(
+                        {
+                          datastore: inputs.datastore,
+                          tableName: "___dummy___",
+                          definition: {},
+                          meta: { applyForeignKeys: true },
+                        },
+                        {
+                          success: function () {
+                            console.log("FOREIGN KEY APPLICATION COMPLETED");
+                            _fkApplicationScheduled = false;
+                          },
+                          error: function (err) {
+                            console.error(
+                              "FOREIGN KEY APPLICATION FAILED:",
+                              err
+                            );
+                            _fkApplicationScheduled = false;
+                          },
+                        }
+                      );
+                    }, 5000); // 5 seconds should be enough for all tables to be created
+                  }
+
+                  // Release connection and return success
+                  Helpers.connection.releaseConnection(
+                    connection,
+                    leased,
+                    function () {
+                      return exits.success();
+                    }
+                  );
+                }
+              ); // </ buildIndexes() >
+            }
+          ); // </ runNativeQuery for table creation >
+        }); // </ afterNamespaceCreation >
+      }
+    ); // </ spawnConnection >
+  },
+});
+
+// Helper function to apply all foreign keys in a single transaction
+function applyForeignKeys(datastore, exits) {
+  console.log("APPLYING FOREIGN KEYS");
+
+  var Helpers = require("./private");
+  var _ = require("@sailshq/lodash");
+
+  // Spawn a connection to the database
+  Helpers.connection.spawnConnection(datastore, function (err, connection) {
+    if (err) {
+      console.error(
+        "Error connecting to database for foreign key application:",
+        err
+      );
+      return exits.error(err);
+    }
+
+    // Query the database for all tables
+    var tablesQuery =
+      "SELECT tablename FROM pg_tables WHERE schemaname = 'public'";
+
+    Helpers.query.runNativeQuery(
+      connection,
+      tablesQuery,
+      [],
+      function (err, tablesResult) {
         if (err) {
-          // If there was an issue, release the connection
-          Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
+          console.error("Error querying tables:", err);
+          Helpers.connection.releaseConnection(connection, false, function () {
             return exits.error(err);
           });
           return;
         }
 
-        // Escape Table Name
-        var tableName;
-        try {
-          tableName = Helpers.schema.escapeTableName(inputs.tableName, schemaName);
-        } catch (e) {
-          // If there was an issue, release the connection
-          Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-            return exits.error(e);
+        // Extract table names
+        var tables = [];
+        if (tablesResult && tablesResult.rows) {
+          tables = tablesResult.rows.map(function (row) {
+            return row.tablename;
+          });
+        }
+
+        console.log("DISCOVERED TABLES:", tables.join(", "));
+
+        if (tables.length === 0) {
+          console.log("No tables found, skipping foreign key application");
+          Helpers.connection.releaseConnection(connection, false, function () {
+            return exits.success();
           });
           return;
         }
 
-
-        //  ╔╗ ╦ ╦╦╦  ╔╦╗  ┌─┐ ┬ ┬┌─┐┬─┐┬ ┬  ┌─┐┌┬┐┬─┐┬┌┐┌┌─┐
-        //  ╠╩╗║ ║║║   ║║  │─┼┐│ │├┤ ├┬┘└┬┘  └─┐ │ ├┬┘│││││ ┬
-        //  ╚═╝╚═╝╩╩═╝═╩╝  └─┘└└─┘└─┘┴└─ ┴   └─┘ ┴ ┴└─┴┘└┘└─┘
-
-        // Iterate through each attribute, building a query string
-        var schema;
-        var processedDefinition;
+        // Collect foreign keys from model definitions
         try {
-          processedDefinition = Helpers.schema.processForeignKeys(inputs.definition, inputs.tableName);
-          schema = Helpers.schema.buildSchema(processedDefinition);
-        } catch (e) {
-          // If there was an issue, release the connection
-          Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-            return exits.error(e);
-          });
-          return;
-        }
+          var foreignKeys = collectForeignKeys(datastore, tables);
 
-        // Build Query
-        var query = 'CREATE TABLE IF NOT EXISTS ' + tableName + ' (' + schema + ')';
-
-
-        //  ╦═╗╦ ╦╔╗╔  ┌─┐┬─┐┌─┐┌─┐┌┬┐┌─┐  ┌┬┐┌─┐┌┐ ┬  ┌─┐
-        //  ╠╦╝║ ║║║║  │  ├┬┘├┤ ├─┤ │ ├┤    │ ├─┤├┴┐│  ├┤
-        //  ╩╚═╚═╝╝╚╝  └─┘┴└─└─┘┴ ┴ ┴ └─┘   ┴ ┴ ┴└─┘┴─┘└─┘
-        //  ┌─┐ ┬ ┬┌─┐┬─┐┬ ┬
-        //  │─┼┐│ │├┤ ├┬┘└┬┘
-        //  └─┘└└─┘└─┘┴└─ ┴
-        Helpers.query.runNativeQuery(connection, query, [], function runNativeQueryCb(err) {
-          if (err) {
-            // If there was an issue, release the connection
-            Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-              return exits.error(err);
-            });
+          if (foreignKeys.length === 0) {
+            console.log("No foreign keys found to apply");
+            Helpers.connection.releaseConnection(
+              connection,
+              false,
+              function () {
+                return exits.success();
+              }
+            );
             return;
           }
 
-          // Register this table as created in our registry
-          if (global._tableRegistry) {
-            global._tableRegistry.registerTable(inputs.tableName);
-            console.log(`Registered table ${inputs.tableName} as created`);
-          }
+          console.log(`COLLECTED ${foreignKeys.length} FOREIGN KEYS TO APPLY`);
 
-          //  ╔╗ ╦ ╦╦╦  ╔╦╗  ┬┌┐┌┌┬┐┌─┐─┐ ┬┌─┐┌─┐
-          //  ╠╩╗║ ║║║   ║║  ││││ ││├┤ ┌┴┬┘├┤ └─┐
-          //  ╚═╝╚═╝╩╩═╝═╩╝  ┴┘└┘─┴┘└─┘┴ └─└─┘└─┘
-          // Build any indexes
-          Helpers.schema.buildIndexes({
-            connection: connection,
-            definition: inputs.definition,
-            tableName: inputs.tableName
-          },
-          function buildIndexesCb(err) {
+          // Start a transaction
+          Helpers.query.runNativeQuery(connection, "BEGIN", [], function (err) {
             if (err) {
-              Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-                return exits.error(err);
-              });
+              console.error("Error starting transaction:", err);
+              Helpers.connection.releaseConnection(
+                connection,
+                false,
+                function () {
+                  return exits.error(err);
+                }
+              );
               return;
             }
 
-            // Check if there are any deferred foreign key constraints to add
-            if (processedDefinition._deferredForeignKeys && processedDefinition._deferredForeignKeys.length > 0) {
-              console.log(`Processing ${processedDefinition._deferredForeignKeys.length} deferred foreign key constraints for ${inputs.tableName}`);
-              
-              // Create a function to add deferred constraints one by one
-              var addDeferredConstraints = function(constraints, idx, cb) {
-                if (idx >= constraints.length) {
-                  return cb();
-                }
-                
-                var constraint = constraints[idx];
-                
-                // Check if the referenced table exists now
-                if (!global._tableRegistry.tableExists(constraint.referencedTable)) {
-                  console.log(`Still can't add foreign key to ${constraint.referencedTable}, table doesn't exist yet`);
-                  return addDeferredConstraints(constraints, idx + 1, cb);
-                }
-                
-                // Add the constraint
-                var alterQuery = `ALTER TABLE ${tableName} ADD ${constraint.constraint}`;
-                console.log(`Adding deferred constraint: ${alterQuery}`);
-                
-                Helpers.query.runNativeQuery(connection, alterQuery, [], function(alterErr) {
-                  if (alterErr) {
-                    console.log(`Error adding deferred constraint: ${alterErr.message}`);
-                    // Log more details about the error
-                    if (alterErr.code) {
-                      console.log(`Error code: ${alterErr.code}`);
-                    }
-                    if (alterErr.detail) {
-                      console.log(`Error detail: ${alterErr.detail}`);
-                    }
-                    if (alterErr.hint) {
-                      console.log(`Error hint: ${alterErr.hint}`);
-                    }
-                    
-                    // If the error is because the constraint already exists, we can ignore it
-                    if (alterErr.code === '42710') { // duplicate_object
-                      console.log(`Constraint already exists, continuing...`);
-                    }
-                    // If the error is because the referenced table doesn't exist, mark it for retry
-                    else if (alterErr.code === '42P01') { // undefined_table
-                      console.log(`Referenced table doesn't exist yet, will retry later`);
-                      constraint._retryLater = true;
-                    }
-                  } else {
-                    console.log(`Successfully added deferred constraint to ${constraint.referencedTable}`);
-                  }
-                  
-                  // Continue with next constraint regardless of error
-                  return addDeferredConstraints(constraints, idx + 1, cb);
-                });
-              };
-              
-              // Start adding deferred constraints
-              addDeferredConstraints(processedDefinition._deferredForeignKeys, 0, function() {
-                // Check if any constraints need to be retried later
-                var retryConstraints = processedDefinition._deferredForeignKeys.filter(function(constraint) {
-                  return constraint._retryLater === true;
-                });
-                
-                if (retryConstraints.length > 0) {
-                  console.log(`${retryConstraints.length} constraints need to be retried later`);
-                  // Store these constraints in the global registry for later processing
-                  if (!global._tableRegistry.deferredConstraints) {
-                    global._tableRegistry.deferredConstraints = [];
-                  }
-                  
-                  // Add these constraints to the global registry
-                  retryConstraints.forEach(function(constraint) {
-                    global._tableRegistry.deferredConstraints.push({
-                      tableName: tableName,
-                      constraint: constraint
-                    });
-                  });
-                }
-                
-                Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-                  return exits.success();
-                });
-              });
-            } else {
-              // Check if there are any global deferred constraints that reference this table
-              if (global._tableRegistry.deferredConstraints && global._tableRegistry.deferredConstraints.length > 0) {
-                // Filter constraints that can now be applied because this table was just created
-                var applicableConstraints = global._tableRegistry.deferredConstraints.filter(function(item) {
-                  return item.constraint.referencedTable === inputs.tableName;
-                });
-                
-                if (applicableConstraints.length > 0) {
-                  console.log(`Found ${applicableConstraints.length} deferred constraints that can now be applied because ${inputs.tableName} was created`);
-                  
-                  // Process these constraints
-                  var processConstraints = function(constraintItems, idx, cb) {
-                    if (idx >= constraintItems.length) {
-                      return cb();
-                    }
-                    
-                    var item = constraintItems[idx];
-                    var alterQuery = `ALTER TABLE "${item.tableName}" ADD ${item.constraint.constraint}`;
-                    console.log(`Adding previously deferred constraint: ${alterQuery}`);
-                    
-                    Helpers.query.runNativeQuery(connection, alterQuery, [], function(alterErr) {
-                      if (alterErr) {
-                        console.log(`Error adding previously deferred constraint: ${alterErr.message}`);
-                        if (alterErr.code) {
-                          console.log(`Error code: ${alterErr.code}`);
+            // Apply foreign keys one by one
+            applyForeignKeysSequentially(
+              connection,
+              foreignKeys,
+              0,
+              function (err) {
+                if (err) {
+                  // Try to rollback
+                  Helpers.query.runNativeQuery(
+                    connection,
+                    "ROLLBACK",
+                    [],
+                    function () {
+                      console.error(
+                        "Error applying foreign keys, rolled back:",
+                        err
+                      );
+                      Helpers.connection.releaseConnection(
+                        connection,
+                        false,
+                        function () {
+                          return exits.error(err);
                         }
-                      } else {
-                        console.log(`Successfully added previously deferred constraint`);
-                        
-                        // Remove this constraint from the global registry
-                        global._tableRegistry.deferredConstraints = global._tableRegistry.deferredConstraints.filter(function(c) {
-                          return c !== item;
-                        });
-                      }
-                      
-                      // Continue with next constraint
-                      return processConstraints(constraintItems, idx + 1, cb);
-                    });
-                  };
-                  
-                  // Process the applicable constraints
-                  processConstraints(applicableConstraints, 0, function() {
-                    Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-                      return exits.success();
-                    });
-                  });
-                } else {
-                  Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-                    return exits.success();
-                  });
+                      );
+                    }
+                  );
+                  return;
                 }
-              } else {
-                Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-                  return exits.success();
-                });
+
+                // Commit transaction
+                Helpers.query.runNativeQuery(
+                  connection,
+                  "COMMIT",
+                  [],
+                  function (err) {
+                    if (err) {
+                      console.error("Error committing transaction:", err);
+                      Helpers.connection.releaseConnection(
+                        connection,
+                        false,
+                        function () {
+                          return exits.error(err);
+                        }
+                      );
+                      return;
+                    }
+
+                    console.log("SUCCESSFULLY APPLIED FOREIGN KEYS");
+                    Helpers.connection.releaseConnection(
+                      connection,
+                      false,
+                      function () {
+                        return exits.success();
+                      }
+                    );
+                  }
+                );
               }
-            }
-          }); // </ buildIndexes() >
-        }); // </ runNativeQuery >
-      }); // </ afterNamespaceCreation >
-    }); // </ spawnConnection >
+            );
+          });
+        } catch (e) {
+          console.error("Error in foreign key collection:", e);
+          Helpers.connection.releaseConnection(connection, false, function () {
+            return exits.error(e);
+          });
+        }
+      }
+    );
+  });
+}
+
+// Apply foreign keys one by one
+function applyForeignKeysSequentially(connection, foreignKeys, index, cb) {
+  var Helpers = require("./private");
+
+  if (index >= foreignKeys.length) {
+    return cb();
   }
-});
+
+  var fk = foreignKeys[index];
+  console.log(
+    `Applying foreign key [${index + 1}/${foreignKeys.length}]: ${fk.query}`
+  );
+
+  Helpers.query.runNativeQuery(connection, fk.query, [], function (err) {
+    if (err) {
+      console.error(
+        `Error applying foreign key ${fk.sourceTable}.${fk.sourceColumn} -> ${fk.targetTable}.${fk.targetColumn}:`,
+        err.message
+      );
+      // Continue with next foreign key rather than aborting
+    }
+
+    // Process next foreign key
+    applyForeignKeysSequentially(connection, foreignKeys, index + 1, cb);
+  });
+}
+
+// Collect foreign keys from all models
+function collectForeignKeys(datastore, tables) {
+  var foreignKeys = [];
+  var _ = require("@sailshq/lodash");
+
+  // Get all models from the datastore's model definitions
+  var models = datastore.collections || {};
+
+  // Process each model
+  _.each(models, function (model, modelName) {
+    var tableName = model.tableName || modelName;
+
+    // Skip if table doesn't exist
+    if (!tables.includes(tableName)) {
+      return;
+    }
+
+    // Process each attribute for foreign keys
+    _.each(model.attributes, function (attribute, attrName) {
+      // Skip primary keys and timestamps
+      if (
+        attrName === "id" ||
+        attrName === "createdAt" ||
+        attrName === "updatedAt"
+      ) {
+        return;
+      }
+
+      // Case 1: Explicit foreign key
+      if (attribute.meta && attribute.meta.foreignKey === true) {
+        var targetTable =
+          attribute.meta.references || attribute.model || attrName;
+        var targetColumn = attribute.meta.referencesKey || "id";
+
+        // Skip if target table doesn't exist
+        if (!tables.includes(targetTable)) {
+          console.log(
+            `Skipping FK ${tableName}.${attrName} -> ${targetTable}.${targetColumn} (target table doesn't exist)`
+          );
+          return;
+        }
+
+        // Build ON DELETE/UPDATE behavior
+        var onDelete = attribute.meta.onDelete
+          ? ` ON DELETE ${attribute.meta.onDelete.toUpperCase()}`
+          : " ON DELETE RESTRICT";
+        var onUpdate = attribute.meta.onUpdate
+          ? ` ON UPDATE ${attribute.meta.onUpdate.toUpperCase()}`
+          : " ON UPDATE CASCADE";
+
+        // Build constraint
+        var constraintName = `fk_${tableName}_${attrName}_${targetTable}`;
+        var query = `ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" FOREIGN KEY ("${attrName}") REFERENCES "${targetTable}" ("${targetColumn}")${onDelete}${onUpdate}`;
+
+        foreignKeys.push({
+          sourceTable: tableName,
+          sourceColumn: attrName,
+          targetTable: targetTable,
+          targetColumn: targetColumn,
+          query: query,
+        });
+      }
+      // Case 2: Implicit via model property
+      else if (attribute.model) {
+        var targetTable = attribute.model;
+
+        // Skip if target table doesn't exist
+        if (!tables.includes(targetTable)) {
+          console.log(
+            `Skipping FK ${tableName}.${attrName} -> ${targetTable}.id (target table doesn't exist)`
+          );
+          return;
+        }
+
+        // Build constraint
+        var constraintName = `fk_${tableName}_${attrName}_${targetTable}`;
+        var query = `ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" FOREIGN KEY ("${attrName}") REFERENCES "${targetTable}" ("id") ON DELETE RESTRICT ON UPDATE CASCADE`;
+
+        foreignKeys.push({
+          sourceTable: tableName,
+          sourceColumn: attrName,
+          targetTable: targetTable,
+          targetColumn: "id",
+          query: query,
+        });
+      }
+      // Case 3: Detect by naming convention
+      else if (
+        attrName.toLowerCase().endsWith("id") &&
+        attrName.toLowerCase() !== "id"
+      ) {
+        var targetTable = attrName.slice(0, -2).toLowerCase();
+
+        // Skip if target table doesn't exist or is self-referencing
+        if (!tables.includes(targetTable) || targetTable === tableName) {
+          return;
+        }
+
+        // Build constraint
+        var constraintName = `fk_${tableName}_${attrName}_${targetTable}`;
+        var query = `ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" FOREIGN KEY ("${attrName}") REFERENCES "${targetTable}" ("id") ON DELETE RESTRICT ON UPDATE CASCADE`;
+
+        foreignKeys.push({
+          sourceTable: tableName,
+          sourceColumn: attrName,
+          targetTable: targetTable,
+          targetColumn: "id",
+          query: query,
+        });
+      }
+    });
+  });
+
+  return foreignKeys;
+}

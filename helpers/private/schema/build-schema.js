@@ -95,13 +95,13 @@ module.exports = function buildSchema(definition) {
       attribute.notNull ? 'NOT NULL' : '',
       attribute.unique ? 'UNIQUE' : ''
     ];
-    
+
     // Add foreign key constraint if this column has one and the referenced table exists
-    if (definition[columnName] && definition[columnName]._isForeignKey && 
+    if (definition[columnName] && definition[columnName]._isForeignKey &&
         definition[columnName]._foreignKeyConstraint) {
       columnParts.push(definition[columnName]._foreignKeyConstraint);
     }
-    
+
     // Join all parts with spaces and return
     return columnParts.filter(Boolean).join(' ');
 
@@ -115,13 +115,13 @@ module.exports = function buildSchema(definition) {
   // Find any foreign keys in the definition that need to be added as table constraints
   // (This is for foreign keys that couldn't be added inline with the column definition)
   var foreignKeys = [];
-  
+
   _.forEach(definition, function findFK(attribute, columnName) {
     if (attribute._isForeignKey && !attribute._foreignKeyConstraint) {
       // Format: FOREIGN KEY (column_name) REFERENCES table_name(referenced_column_name)
       var constraint = 'FOREIGN KEY ("' + columnName + '") REFERENCES "' +
                       attribute._referencesTable + '"("' + attribute._referencesColumn + '")';
-      
+
       // Add ON DELETE behavior if specified
       if (attribute._onDelete) {
         constraint += ' ON DELETE ' + attribute._onDelete;
@@ -129,7 +129,7 @@ module.exports = function buildSchema(definition) {
         // Default to RESTRICT for safety
         constraint += ' ON DELETE RESTRICT';
       }
-      
+
       // Add ON UPDATE behavior if specified
       if (attribute._onUpdate) {
         constraint += ' ON UPDATE ' + attribute._onUpdate;
@@ -137,7 +137,7 @@ module.exports = function buildSchema(definition) {
         // Default to CASCADE for updates
         constraint += ' ON UPDATE CASCADE';
       }
-      
+
       // Check if the referenced table exists in our registry
       if (global._tableRegistry && global._tableRegistry.tableExists(attribute._referencesTable)) {
         foreignKeys.push(constraint);
