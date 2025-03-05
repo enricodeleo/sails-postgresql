@@ -74,6 +74,8 @@ module.exports = require('machine').build({
     var handleForeignKeys = false;
     if (inputs.meta && inputs.meta.foreignKeys) {
       handleForeignKeys = true;
+      console.log('FOREIGN KEYS: Foreign keys detected for table:', inputs.tableName);
+      console.log('FOREIGN KEYS: Foreign key metadata:', JSON.stringify(inputs.meta.foreignKeys, null, 2));
     }
 
 
@@ -162,6 +164,7 @@ module.exports = require('machine').build({
         try {
           // If we have foreign keys, add them to the definition metadata
           if (handleForeignKeys && inputs.meta.foreignKeys) {
+            console.log('FOREIGN KEYS: Adding foreign key constraints to schema for table:', inputs.tableName);
             // Create a copy of the definition with the foreign key metadata
             var definitionWithFK = _.cloneDeep(inputs.definition);
             definitionWithFK._meta = definitionWithFK._meta || {};
@@ -218,11 +221,15 @@ module.exports = require('machine').build({
             
             // If we don't need to handle post-creation foreign keys, we're done
             if (!handleForeignKeys || !inputs.meta.postCreateForeignKeys) {
+              console.log('FOREIGN KEYS: No post-creation foreign keys needed for table:', inputs.tableName);
               Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
                 return exits.success();
               });
               return;
             }
+            
+            console.log('FOREIGN KEYS: Adding post-creation foreign keys for table:', inputs.tableName);
+            console.log('FOREIGN KEYS: Post-creation foreign keys:', JSON.stringify(inputs.meta.postCreateForeignKeys, null, 2));
             
             // Add any foreign key constraints that couldn't be added during table creation
             // (like self-referencing tables or circular dependencies)

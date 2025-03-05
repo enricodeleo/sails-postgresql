@@ -17,6 +17,7 @@ var _ = require('@sailshq/lodash');
  * @returns {Object} Object with sorted table names and dependency info
  */
 module.exports = function analyzeDependencies(models) {
+  console.log('FOREIGN KEYS: Analyzing dependencies for models:', Object.keys(models));
   // Initialize dependency tracking
   var dependencies = {};
   var foreignKeys = {};
@@ -47,6 +48,8 @@ module.exports = function analyzeDependencies(models) {
       if (!attribute.model || !attribute.meta || attribute.meta.foreignKey !== true) {
         return;
       }
+      
+      console.log('FOREIGN KEYS: Found foreign key in model:', modelName, 'attribute:', attrName, 'references model:', attribute.model);
       
       // Get the referenced model and table
       var referencedModel = models[attribute.model];
@@ -113,9 +116,16 @@ module.exports = function analyzeDependencies(models) {
     visit(tableNames[i]);
   }
   
-  return {
+  var result = {
     sortedTables: sorted,
     dependencies: dependencies,
     foreignKeys: foreignKeys
   };
+  
+  console.log('FOREIGN KEYS: Dependency analysis complete');
+  console.log('FOREIGN KEYS: Sorted tables:', result.sortedTables);
+  console.log('FOREIGN KEYS: Dependencies:', JSON.stringify(result.dependencies, null, 2));
+  console.log('FOREIGN KEYS: Foreign keys:', JSON.stringify(result.foreignKeys, null, 2));
+  
+  return result;
 };

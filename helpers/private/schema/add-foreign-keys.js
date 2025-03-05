@@ -49,10 +49,13 @@ module.exports = function addForeignKeys(options, cb) {
 
   // If there are no foreign keys to add, just return
   if (foreignKeys.length === 0) {
+    console.log('FOREIGN KEYS: No foreign keys to add for table:', tableName);
     return setImmediate(function() {
       cb();
     });
   }
+  
+  console.log('FOREIGN KEYS: Adding', foreignKeys.length, 'foreign key constraints to table:', tableName);
 
   // Process each foreign key constraint
   async.eachSeries(foreignKeys, function(foreignKey, next) {
@@ -63,6 +66,8 @@ module.exports = function addForeignKeys(options, cb) {
     var query = 'ALTER TABLE ' + fullTableName + ' ADD CONSTRAINT ' + constraintName + 
                 ' FOREIGN KEY ("' + foreignKey.columnName + '") REFERENCES "' + 
                 schemaName + '"."' + foreignKey.references + '" ("' + foreignKey.referencedColumnName + '")';
+    
+    console.log('FOREIGN KEYS: Executing query:', query);
     
     // Add ON DELETE clause if specified
     if (foreignKey.onDelete && foreignKey.onDelete !== 'NO ACTION') {
@@ -79,10 +84,13 @@ module.exports = function addForeignKeys(options, cb) {
       if (err) {
         // If the error is about the constraint already existing, just continue
         if (err.code === '42P07' || (err.message && err.message.indexOf('already exists') > -1)) {
+          console.log('FOREIGN KEYS: Constraint already exists, continuing');
           return next();
         }
+        console.error('FOREIGN KEYS: Error adding constraint:', err);
         return next(err);
       }
+      console.log('FOREIGN KEYS: Successfully added constraint for column:', foreignKey.columnName);
       return next();
     });
   }, cb);

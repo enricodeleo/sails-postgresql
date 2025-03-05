@@ -103,9 +103,11 @@ module.exports = function buildSchema(definition) {
   
   // Add foreign key constraints if provided
   if (definition._meta && definition._meta.foreignKeys) {
+    console.log('FOREIGN KEYS: Building schema with foreign keys:', JSON.stringify(definition._meta.foreignKeys, null, 2));
     _.each(definition._meta.foreignKeys, function(fk) {
       var constraint = 'FOREIGN KEY ("' + fk.columnName + '") ' +
                        'REFERENCES "' + fk.references + '" ("' + fk.referencedColumnName + '")';
+      console.log('FOREIGN KEYS: Adding constraint to schema:', constraint);
       
       // Add ON DELETE clause if specified
       if (fk.onDelete && fk.onDelete !== 'NO ACTION') {
