@@ -22,11 +22,15 @@ module.exports = function debugModels(models) {
     console.log('  tableName:', model.tableName || modelName);
     console.log('  primaryKey:', model.primaryKey || 'id');
     console.log('  Schema keys:', Object.keys(model.schema || {}));
+    console.log('  Definition keys:', Object.keys(model.definition || {}));
     
     console.log('  Attributes with foreign keys:');
     var hasForeignKeys = false;
     
-    _.each(model.schema, function(attribute, attrName) {
+    // Check both schema and definition (schema is empty in our case)
+    var attributes = model.definition || model.schema || {};
+    
+    _.each(attributes, function(attribute, attrName) {
       console.log('    Attribute:', attrName);
       console.log('      type:', attribute.type);
       console.log('      model:', attribute.model);

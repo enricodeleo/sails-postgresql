@@ -43,7 +43,7 @@ module.exports = function analyzeDependencies(models) {
     }
     
     // Analyze attributes for foreign key relationships
-    _.each(modelDef.schema, function(attribute, attrName) {
+    _.each(modelDef.definition, function(attribute, attrName) {
       console.log('FOREIGN KEYS: Analyzing attribute:', attrName, 'in model:', modelName);
       console.log('FOREIGN KEYS: Attribute:', JSON.stringify(attribute, null, 2));
       

@@ -163,10 +163,14 @@ module.exports = require('machine').build({
     
     // Check if any models have foreign key relationships
     var hasForeignKeys = false;
-    _.each(inputs.models, function(model) {
-      _.each(model.definition, function(attribute) {
+    console.log('FOREIGN KEYS: Checking models in registerDatastore');
+    _.each(inputs.models, function(model, modelName) {
+      console.log('FOREIGN KEYS: Checking model definition:', modelName, Object.keys(model.definition || {}));
+      _.each(model.definition, function(attribute, attrName) {
+        console.log('FOREIGN KEYS: Checking attribute:', attrName, 'model:', attribute.model, 'meta:', JSON.stringify(attribute.meta || {}));
         if (attribute.model && attribute.meta && attribute.meta.foreignKey === true) {
           hasForeignKeys = true;
+          console.log('FOREIGN KEYS: Found foreign key in model:', modelName, 'attribute:', attrName, 'referencing:', attribute.model);
         }
       });
     });
