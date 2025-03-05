@@ -99,9 +99,29 @@ module.exports = function buildSchema(definition) {
   // Add the Primary Key to the definition
   var constraints = _.compact([
     primaryKeys.length && 'PRIMARY KEY ("' + primaryKeys.join('","') + '")'
-  ]).join(', ');
-
-  var schema = _.compact([columns, constraints]).join(', ');
+  ]);
+  
+  // Add foreign key constraints if provided
+  if (definition._meta && definition._meta.foreignKeys) {
+    _.each(definition._meta.foreignKeys, function(fk) {
+      var constraint = 'FOREIGN KEY ("' + fk.columnName + '") ' +
+                       'REFERENCES "' + fk.references + '" ("' + fk.referencedColumnName + '")';
+      
+      // Add ON DELETE clause if specified
+      if (fk.onDelete && fk.onDelete !== 'NO ACTION') {
+        constraint += ' ON DELETE ' + fk.onDelete;
+      }
+      
+      // Add ON UPDATE clause if specified
+      if (fk.onUpdate && fk.onUpdate !== 'NO ACTION') {
+        constraint += ' ON UPDATE ' + fk.onUpdate;
+      }
+      
+      constraints.push(constraint);
+    });
+  }
+  
+  var schema = _.compact([columns, constraints.join(', ')]).join(', ');
 
   return schema;
 };

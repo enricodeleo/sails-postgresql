@@ -64,10 +64,17 @@ module.exports = require('machine').build({
     // Dependencies
     var _ = require('@sailshq/lodash');
     var Helpers = require('./private');
+    var async = require('async');
 
 
     // Set a flag if a leased connection from outside the adapter was used or not.
     var leased = _.has(inputs.meta, 'leasedConnection');
+    
+    // Check if we need to handle foreign keys
+    var handleForeignKeys = false;
+    if (inputs.meta && inputs.meta.foreignKeys) {
+      handleForeignKeys = true;
+    }
 
 
     //  ╔═╗╦ ╦╔═╗╔═╗╦╔═  ┌─┐┌─┐┬─┐  ┌─┐  ┌─┐┌─┐  ┌─┐┌─┐┬ ┬┌─┐┌┬┐┌─┐
@@ -153,7 +160,16 @@ module.exports = require('machine').build({
         // Iterate through each attribute, building a query string
         var schema;
         try {
-          schema = Helpers.schema.buildSchema(inputs.definition);
+          // If we have foreign keys, add them to the definition metadata
+          if (handleForeignKeys && inputs.meta.foreignKeys) {
+            // Create a copy of the definition with the foreign key metadata
+            var definitionWithFK = _.cloneDeep(inputs.definition);
+            definitionWithFK._meta = definitionWithFK._meta || {};
+            definitionWithFK._meta.foreignKeys = inputs.meta.foreignKeys;
+            schema = Helpers.schema.buildSchema(definitionWithFK);
+          } else {
+            schema = Helpers.schema.buildSchema(inputs.definition);
+          }
         } catch (e) {
           // If there was an issue, release the connection
           Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
@@ -193,14 +209,38 @@ module.exports = require('machine').build({
           },
 
           function buildIndexesCb(err) {
-            Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
-              if (err) {
+            if (err) {
+              Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
                 return exits.error(err);
-              }
-
-              return exits.success();
+              });
+              return;
+            }
+            
+            // If we don't need to handle post-creation foreign keys, we're done
+            if (!handleForeignKeys || !inputs.meta.postCreateForeignKeys) {
+              Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
+                return exits.success();
+              });
+              return;
+            }
+            
+            // Add any foreign key constraints that couldn't be added during table creation
+            // (like self-referencing tables or circular dependencies)
+            Helpers.schema.addForeignKeys({
+              connection: connection,
+              tableName: inputs.tableName,
+              schemaName: schemaName,
+              foreignKeys: inputs.meta.postCreateForeignKeys,
+              runNativeQuery: Helpers.query.runNativeQuery
+            }, function(err) {
+              Helpers.connection.releaseConnection(connection, leased, function releaseConnectionCb() {
+                if (err) {
+                  return exits.error(err);
+                }
+                return exits.success();
+              });
+              return;
             });
-            return;
           }); // </ buildIndexes() >
         }); // </ runNativeQuery >
       }); // </ afterNamespaceCreation >
