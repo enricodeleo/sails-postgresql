@@ -44,8 +44,12 @@ module.exports = function analyzeDependencies(models) {
     
     // Analyze attributes for foreign key relationships
     _.each(modelDef.schema, function(attribute, attrName) {
+      console.log('FOREIGN KEYS: Analyzing attribute:', attrName, 'in model:', modelName);
+      console.log('FOREIGN KEYS: Attribute:', JSON.stringify(attribute, null, 2));
+      
       // Skip attributes that aren't associations or don't have foreignKey: true
       if (!attribute.model || !attribute.meta || attribute.meta.foreignKey !== true) {
+        console.log('FOREIGN KEYS: Skipping attribute:', attrName, 'in model:', modelName, '- not a foreign key');
         return;
       }
       
