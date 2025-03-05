@@ -50,6 +50,7 @@ module.exports = function analyzeDependencies(models) {
       }
       
       console.log('FOREIGN KEYS: Found foreign key in model:', modelName, 'attribute:', attrName, 'references model:', attribute.model);
+      console.log('FOREIGN KEYS: Attribute details:', JSON.stringify(attribute, null, 2));
       
       // Get the referenced model and table
       var referencedModel = models[attribute.model];

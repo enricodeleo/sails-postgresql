@@ -24,6 +24,11 @@ module.exports = {
     buildIndexes: require('./schema/build-indexes'),
     buildSchema: require('./schema/build-schema'),
     createNamespace: require('./schema/create-namespace'),
-    escapeTableName: require('./schema/escape-table-name')
-  }
+    escapeTableName: require('./schema/escape-table-name'),
+    analyzeDependencies: require('./schema/analyze-dependencies'),
+    addForeignKeys: require('./schema/add-foreign-keys')
+  },
+  
+  // Debug helpers
+  debugModels: require('./debug-models')
 };
